@@ -1,0 +1,51 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>English Learning 보안 점검</title><style>body{font-family:system-ui,sans-serif;background:#f2f7f4;color:#173d35;margin:0;padding:18px}main{max-width:640px;margin:auto}section{background:#fff;border:1px solid #dae3df;border-radius:16px;padding:18px;margin:12px 0}h1{font-size:25px}button,a.btn{box-sizing:border-box;display:block;width:100%;background:#173d35;color:white;border:0;border-radius:10px;padding:14px;text-align:center;font-size:16px;font-weight:700;text-decoration:none;margin:8px 0}button:disabled{opacity:.5}input{box-sizing:border-box;width:100%;padding:10px;border:1px solid #aabbb5;border-radius:8px;font-size:16px}li{padding:10px 0;border-bottom:1px solid #e4ebe7;overflow-wrap:anywhere}.pass{color:#147346}.fail{color:#a32121}.skip{color:#80601b}small{color:#52625d}#status{white-space:pre-wrap}</style><main><h1>English Learning 보안 점검</h1><section><strong>읽기 전용 · v1.5</strong><p>기존 앱에 로그인한 테스트 학생 계정으로 서버의 읽기 권한만 점검합니다. 비밀번호를 입력하지 않으며, 데이터나 점수를 수정하지 않습니다. 조회한 개인정보는 표시하지 않습니다.</p><p id="status">Firebase 연결 중…</p><a class="btn" href="london_v1.html?v=15">학생 앱 열기 / 로그인</a><a class="btn" href="london_v1_teacher.html?v=15">선생님 앱 열기 / 로그인</a></section><section><label for="other">다른 테스트 학생의 UID (선택)</label><p><small>비워 두면 존재하지 않는 임의의 문서 경로로 점검합니다. 실제 다른 학생 문서 검증은 별도 테스트 학생 UID를 입력해야 합니다. 실명이나 비밀번호를 입력하지 마세요.</small></p><input id="other" autocomplete="off" maxlength="128" placeholder="테스트 계정 UID (선택)"><button id="run" disabled>보안 읽기 권한 점검 시작</button><p id="summary" role="status"></p><ol id="results"></ol><small>읽기 권한만 검사합니다. 점수 수정, 완료일 변경, 전체 규칙 및 서버의 문제 풀이 검증은 별도 점검이 필요합니다.</small></section></main><script type="module">
+import {initializeApp} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
+import {getAuth,initializeAuth,inMemoryPersistence} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
+import {getFirestore,doc,collection,getDocFromServer,getDocsFromServer,query,where,documentId,limit} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
+const cfg={apiKey:"AIzaSyASiMcu1ZiI4D7o3ZjLNPhZQeIuDxGV6dY",authDomain:"london-a9997.firebaseapp.com",projectId:"london-a9997",storageBucket:"london-a9997.firebasestorage.app",messagingSenderId:"296905640071",appId:"1:296905640071:web:bf2ec615d210b4bd81d022"};
+const teacherUID='0fxLQmx4YEPXygI8zmqhdlKZW4k2';
+const $=id=>document.getElementById(id);
+let sa,ta,sd,td,gd;
+try{
+ const st=initializeApp(cfg,'student-test'),te=initializeApp(cfg),gu=initializeApp(cfg,'security-readonly-guest');
+ sa=getAuth(st);ta=getAuth(te);const ga=initializeAuth(gu,{persistence:inMemoryPersistence});
+ sd=getFirestore(st);td=getFirestore(te);gd=getFirestore(gu);
+ await Promise.all([sa.authStateReady(),ta.authStateReady(),ga.authStateReady()]);
+ $('status').textContent='학생 로그인: '+(sa.currentUser&&sa.currentUser.uid!==teacherUID?'확인':'없음')+'\n선생님 로그인: '+(ta.currentUser?.uid===teacherUID?'확인':'없음');
+ $('run').disabled=false;
+}catch(e){$('status').textContent='연결 오류: '+(e.code||'Firebase 초기화 실패');}
+$('run').onclick=async()=>{
+ const user=sa?.currentUser;
+ if(!user||user.uid===teacherUID){$('summary').textContent='학생 앱에서 테스트 학생으로 로그인하고 이 페이지를 다시 열어 주세요.';return;}
+ const own=user.uid, entered=$('other').value.trim(), other=entered||('security-test-'+crypto.randomUUID());
+ if(other===own||other===teacherUID||other.includes('/')){$('summary').textContent='다른 테스트 학생 UID를 입력하거나 비워 주세요.';return;}
+ $('run').disabled=true;$('results').replaceChildren();$('summary').textContent='서버 확인 중…';let p=0,f=0,k=0;
+ const add=(label,state,detail)=>{const li=document.createElement('li');li.className=state;li.textContent=label+' — '+detail;$('results').append(li);if(state==='pass')p++;else if(state==='fail')f++;else k++;};
+ const check=async(label,allowed,operation)=>{try{const snap=await operation();if(allowed){add(label,'pass','허용'+(typeof snap.exists==='function'&&!snap.exists()?' (문서 없음)':''));}else{add(label,'fail','차단되어야 하지만 요청이 허용됨');}return allowed?snap:null;}catch(e){if(e.code==='permission-denied'){add(label,allowed?'fail':'pass',allowed?'허용되어야 하지만 차단됨':'차단 정상');}else add(label,'skip','판정 불가: '+(e.code||'연결 오류'));return null;}};
+ const get=(db,...path)=>getDocFromServer(doc(db,...path));
+ const list=(db,col,id)=>getDocsFromServer(query(collection(db,col),where(documentId(),'==',id),limit(1)));
+ try{
+ const self=await check('학생 본인 정보',true,()=>get(sd,'students',own));
+ await check('비로그인 학생 정보 조회',false,()=>get(gd,'students',own));
+ await check('비로그인 학습 기록 조회',false,()=>get(gd,'learning',own));
+ await check('다른 학생 정보 조회'+(entered?'':' (임의 경로)'),false,()=>get(sd,'students',other));
+ await check('다른 학생 학습 기록 조회'+(entered?'':' (임의 경로)'),false,()=>get(sd,'learning',other));
+ await check('다른 학생 개인 순위 조회'+(entered?'':' (임의 경로)'),false,()=>get(sd,'personalRanks',other));
+ await check('학생의 학생 목록 조회',false,()=>list(sd,'students',own));
+ await check('학생의 반 목록 조회',false,()=>list(sd,'classes',other));
+ if(self?.exists()){
+  const cl=await check('학생 본인 반 조회',true,()=>get(sd,'classes',self.data().classId));
+  if(cl?.exists()&&typeof cl.data().level==='string'){
+    const level=cl.data().level; const otherLevel=level==='Level 1'?'Level 2':'Level 1';
+    await check('같은 레벨 순위 조회',true,()=>get(sd,'levelRanks',level));
+    await check('다른 레벨 순위 조회',false,()=>get(sd,'levelRanks',otherLevel));
+  }else add('레벨 순위 권한','skip','반 정보 확인 불가');
+ }else add('본인 반 및 레벨 순위 권한','skip','학생 문서 확인 불가');
+ if(ta?.currentUser?.uid===teacherUID){
+   await check('선생님의 테스트 학생 정보 조회',true,()=>get(td,'students',own));
+   await check('선생님의 학생 목록 권한 (테스트 학생만 조회)',true,()=>list(td,'students',own));
+ }else add('선생님 권한','skip','선생님 앱 로그인 후 다시 점검');
+ }catch(e){add('추가 점검','skip',e.code||'예상하지 못한 오류');}
+ $('summary').textContent=`정상 ${p}개 · 이상 ${f}개 · 미확인 ${k}개`+(entered?'':' / 다른 학생 항목은 임의 문서 경로 테스트');$('run').disabled=false;
+};
+</script></html>
