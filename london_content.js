@@ -18,10 +18,10 @@ function scores(d,c){const earned=new Set(d?.earned||[]);return Object.fromEntri
 function total(d,c){return Object.values(scores(d,c)).reduce((a,b)=>a+b,0)}
 function ref(D,db,uid,id){return id==='legacy'?D.doc(db,'learning',uid):D.doc(db,'chapterLearning',id,'students',uid)}
 function label(c){return c.book+' · Chapter '+c.number+' · '+c.title}
-function directory(c,visible=true){return {book:c.book,title:c.title,number:c.number,keys:c.keys,visible};}
+function directory(c,visible=true){return {book:c.book,title:c.title,number:c.number,keys:c.keys,visible,...(c.revision?{revision:c.revision}:{})};}
 function sameKeys(a,b){return stages.every(k=>JSON.stringify(a[k])===JSON.stringify(b[k]));}
 function signature(o){return JSON.stringify([o.vocabulary.map(v=>v[0]),o.sentences,o.quizzes.map(q=>[q[0],q[1],q[2].map(v=>v[0]),q[3],q[4]]),o.comprehension.map(q=>[q[0],q[1],q[3].map(v=>v[0]),q[4]])]);}
-function correction(c,o){const v=validate(o);if(v.book!==c.book||v.number!==c.number||!sameKeys(v.keys,c.keys)||signature(JSON.parse(c.payload))!==signature(JSON.parse(v.payload)))throw Error('교재명, 챕터 번호, 영어 원문·정답·보기 및 문제 순서는 유지해야 합니다. 제목과 한글 해석만 수정할 수 있습니다.');return v;}
+function correction(c,o){const v=validate(o);if(v.book!==c.book||v.number!==c.number||!validMapping(v.keys,c.keys)||signature(JSON.parse(c.payload))!==signature(JSON.parse(v.payload)))throw Error('교재명, 챕터 번호, 영어 원문·정답·보기 및 문제 순서는 유지해야 합니다. 제목과 한글 해석만 수정할 수 있습니다.');return {...v,keys:c.keys};}
 async function teacherCatalog(D,db){
  const [s,t]=await Promise.all([D.getDocsFromServer(D.collection(db,'contents')),D.getDocsFromServer(D.collection(db,'contentDirectory'))]);
  const items=new Map(s.docs.map(x=>[x.id,{id:x.id,...x.data()}]));const dirs=new Map(t.docs.map(x=>[x.id,x.data()]));
@@ -32,5 +32,14 @@ async function teacherCatalog(D,db){
 function sortContent(a,b){return a.book.localeCompare(b.book)||a.number-b.number;}
 async function catalog(D,db){const snap=await D.getDocsFromServer(D.collection(db,'contentDirectory'));return snap.docs.map(x=>({id:x.id,...x.data()})).sort(sortContent);}
 async function getContent(D,db,id){const s=await D.getDocFromServer(D.doc(db,'contents',id));if(!s.exists())throw Error('학습 자료가 없습니다.');return {id,...s.data()};}
-g.LondonContent={stages,legacy,validate,maxima,scores,total,ref,label,catalog,teacherCatalog,getContent,directory,correction,sameKeys};
+
+function validMapping(expected,actual){return stages.every(k=>Array.isArray(actual?.[k])&&actual[k].length===expected[k].length&&new Set(actual[k]).size===actual[k].length&&actual[k].every((x,i)=>typeof x==='string'&&/^\d+$/.test(x.split(':')[1]||'')&&x.split(':')[0]===expected[k][i].split(':')[0]));}
+function awardKey(c,kind,index){const stage=['word','meaning','reverse'].includes(kind)?'vocab':kind;return c.keys[stage].filter(k=>k.startsWith(kind+':'))[index];}
+function revisionPlan(c,plan){
+ const old=JSON.parse(c.payload), v0=validate(old);if(c.revision||!sameKeys(v0.keys,c.keys)||signature(old)!==signature(plan.old)||old.book!==plan.old.book||old.number!==plan.number)throw Error('Chapter '+plan.number+' 원본과 현재 등록 자료가 다릅니다. 변경하지 않았습니다.');
+ const vocabulary=plan.vi.map(i=>old.vocabulary[i]);const meanings=new Map(vocabulary);const quizzes=plan.qi.map((i,j)=>{const q=old.quizzes[i].slice();q[2]=plan.new.quizzes[j][2].map(([w])=>[w,meanings.get(w)]);return q;});
+ const v=validate({...old,vocabulary,quizzes,comprehension:plan.ci.map(i=>old.comprehension[i])});
+ const keys={vocab:['word','meaning','reverse'].flatMap(kind=>plan.vi.map(i=>awardKey(c,kind,i))),sentence:c.keys.sentence,arrange:c.keys.arrange,quiz:plan.qi.map(i=>awardKey(c,'quiz',i)),comprehension:plan.ci.map(i=>awardKey(c,'comprehension',i))};if(!validMapping(v.keys,keys))throw Error('문항 ID 오류');return {...v,keys,revision:1};
+}
+g.LondonContent={validMapping,awardKey,revisionPlan,stages,legacy,validate,maxima,scores,total,ref,label,catalog,teacherCatalog,getContent,directory,correction,sameKeys};
 })(globalThis);
